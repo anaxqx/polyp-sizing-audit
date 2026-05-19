@@ -1,0 +1,35 @@
+seed: 42
+data:
+  dataset_types: [real_colon, sun]
+  real_colon_labels: data/metadata/real_colon_labels.csv
+  sun_labels: data/metadata/sun_labels.csv
+  real_colon_path: data/raw/real-colon
+  sun_path: data/raw/sun-seg
+  precomputed_split_file: data/splits/fold0.csv
+  photometry_csv: data/features/features_51.csv
+  image_size: 224
+  input_channels: 3
+  num_classes: 2
+  batch_size: 256
+  num_workers: 8
+model:
+  architecture: photometry_mlp
+  photometry_input_dim: 0
+  photometry_hidden: [128, 64]
+  num_classes: 2
+  dropout: 0.3
+training:
+  optimizer: adamw
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  max_epochs: 30
+  scheduler: cosine
+  use_class_weights: true
+logging:
+  output_dir: outputs
+  experiment_name: mlp_features_fold0
+evaluation:
+  class_names: [le_5mm, gt_5mm]
+scenario:
+  id: 1
+  name: mlp_feature_probe

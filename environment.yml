@@ -1,0 +1,26 @@
+name: polyp-sizing-audit
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - scikit-learn
+  - scipy
+  - matplotlib
+  - seaborn
+  - pillow
+  - opencv
+  - pyyaml
+  - tqdm
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
+  - pip:
+      - timm
+      - pytorch-lightning
+      - torchmetrics
+      - tensorboard

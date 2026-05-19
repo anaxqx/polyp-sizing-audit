@@ -1,0 +1,32 @@
+seed: 42
+data:
+  loader: depth
+  csv_path: data/metadata/combined_labels.csv
+  depth_dir: data/depth
+  sun_path: data/raw/sun-seg
+  depth_source: ppsnet
+  precomputed_split_file: data/splits/fold0.csv
+  image_size: 179
+  batch_size: 64
+  num_workers: 8
+  num_classes: 2
+model:
+  architecture: bsenet
+  num_classes: 2
+  dropout_rate: 0.2
+training:
+  optimizer: adamw
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  max_epochs: 30
+  scheduler: cosine
+  use_class_weights: true
+  use_weighted_sampler: true
+logging:
+  output_dir: outputs
+  experiment_name: cnn3_depth_fold0
+evaluation:
+  class_names: [le_5mm, gt_5mm]
+scenario:
+  id: 1
+  name: cnn3_depth_probe
