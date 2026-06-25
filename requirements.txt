@@ -1,0 +1,21 @@
+# Core
+numpy
+pandas
+scikit-learn
+scipy
+matplotlib
+seaborn
+pillow
+opencv-python
+pyyaml
+tqdm
+
+# PyTorch (install separately for your CUDA version, see https://pytorch.org)
+# torch
+# torchvision
+
+# Additional
+timm
+pytorch-lightning
+torchmetrics
+tensorboard

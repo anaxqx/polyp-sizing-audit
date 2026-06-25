@@ -441,15 +441,9 @@ def compute_depth_normalization_stats(depth_maps, method='zscore'):
 
 # Example usage
 if __name__ == "__main__":
-    import yaml
-    from pathlib import Path
+    # Quick self-test with default config values
+    config = {"data": {"image_size": 224}, "augmentation": {}}
 
-    # Load config
-    config_path = Path(__file__).parent.parent.parent / "config" / "scenario1_baseline.yaml"
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-
-    # Create transforms
     train_transform = get_train_transforms(config)
     val_transform = get_val_transforms(config)
 

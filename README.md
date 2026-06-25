@@ -1,56 +1,78 @@
 # Monocular Polyp Sizing Audit
 
-Public code for diagnostic probes that audit monocular polyp size classification behavior.
+[![arXiv](https://img.shields.io/badge/arXiv-2605.20461-b31b1b.svg)](https://arxiv.org/abs/2605.20461)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Project Page](https://img.shields.io/badge/Project-Page-blue.svg)](https://anaxqx.github.io/polyp-sizing-audit/)
+
+> **Understanding Model Behavior in Monocular Polyp Sizing**
+>
+> Xinqi Xiong, Andrea Dunn Beltran, Junmyeong Choi, Sarah K. McGill, Marc Niethammer, Roni Sengupta
+>
+> MICCAI 2026
+
+Companion code release for diagnostic probes that audit monocular polyp size classification behavior.
 
 The task is binary classification:
 
 - `0`: polyp size `<= 5 mm`
 - `1`: polyp size `> 5 mm`
 
-This repository is for reproducing a model-behavior audit, not for releasing a deployable clinical sizing model. It contains only the public code needed to train and evaluate the core probes:
+This repository supports a model-behavior audit, not a deployable clinical sizing model or leaderboard-style benchmark. It contains the public code and lightweight reproducibility assets needed to train and evaluate the core probes:
 
 - ResNet18 RGB probe
 - ViT-B RGB probe
-- CNN3 depth probe
-- MLP on handcrafted features
+- CNN3 depth probe (BseNet)
+- MLP on 51 handcrafted features
 - MLP no-geometry ablation
+- oracle/global scale-factor utilities
+- fold-assignment and statistical-test utilities
 
-Raw videos/frames, generated depth maps, generated masks, checkpoints, and third-party model weights are not included.
+Raw videos/frames, generated depth maps, generated masks, checkpoints, internal cluster paths, and third-party model weights are not included. Users should obtain public datasets and third-party assets from their original sources and generate derived artifacts locally.
 
 ## Quick Start
 
 ```bash
 git clone https://github.com/anaxqx/polyp-sizing-audit.git
 cd polyp-sizing-audit
-scripts/create_conda_env.sh
+
+conda env create -f environment.yml
 conda activate polyp-sizing-audit
+
+# Optional pip path: install PyTorch separately first, see https://pytorch.org
+pip install -r requirements.txt
 ```
 
-Then prepare local data following the CSV/path conventions below and run one of the training configs.
+Then prepare local data following the CSV/path conventions below and run one of the training configs. The training commands require locally prepared public-dataset frames plus derived masks/depth/features.
 
 ## Repository Layout
 
 ```text
 configs/              Example configs for the five public probes
+docs/                 Minimal GitHub Pages project page
+splits/               Public fold assignments used to regenerate local split CSVs
 src/datasets/         Custom dataloaders for RGB/mask/depth/features
-src/models/           ResNet, ViT, CNN3 depth, and MLP probes
+src/models/           ResNet, ViT, CNN3 depth (BseNet), and MLP probes
 src/utils/            Metrics, losses, and transforms
+scripts/              Preprocessing, split, scale-factor, and statistics utilities
 train.py              Training entry point
 eval.py               Checkpoint evaluation entry point
 environment.yml       Conda environment
-scripts/              Environment helper and MLP feature preparation
+requirements.txt      pip requirements
+LICENSE               MIT License
 ```
 
 ## Environment
 
 ```bash
-scripts/create_conda_env.sh
+conda env create -f environment.yml
 conda activate polyp-sizing-audit
 ```
 
 ## Data Format
 
 Prepare your data locally. Paths in the CSVs can be absolute, or relative to the dataset roots in the config.
+
+For paper-number reproduction, these metadata files should describe the Real-Colon and SUN-SEG frame set used by the audit: all 232 unique polyps in the two datasets, after dropping frames without an annotated polyp. The paper reports 147 polyps `<=5 mm` and 85 polyps `>5 mm`, evaluated with patient-stratified cross-validation. Larger raw-dataset frame counts are useful context, but they include frames that are not direct training/evaluation rows after no-polyp frames are removed.
 
 ### Metadata CSVs
 
@@ -91,6 +113,18 @@ dataset,image_name,split
 
 `split` is one of `train`, `val`, or `test`. Keep all frames from the same patient/procedure/polyp in the same held-out fold.
 
+The paper folds can be regenerated from the compact public assignment file:
+
+```bash
+python scripts/create_fold_splits.py \
+  --metadata data/metadata/real_colon_labels.csv \
+  --metadata data/metadata/sun_labels.csv \
+  --fold-assignments splits/fold_assignments.csv \
+  --output-dir data/splits
+```
+
+This writes `data/splits/fold0.csv` through `data/splits/fold4.csv`. For fold `k`, the validation fold is `(k + 1) mod 5`, matching the retained training runs.
+
 ### Images And Masks
 
 RGB configs expect:
@@ -112,6 +146,39 @@ data/depth/sun/{depth_idx:06d}.pt
 ```
 
 Each `.pt` file should load to a single-frame depth array/tensor. PPSNet relative depth and MetricCol metric depth can both be used as long as the config points to the correct `depth_dir` and `depth_source`.
+
+### Oracle Scale Factors
+
+The paper's oracle factors are diagnostic variables, not deployable estimators. They back-calculate the missing scale from the dataset size label and the raw PPSNet depth-based size proxy:
+
+```text
+scale_frame = size_mm / pred_at_1
+```
+
+Per-polyp and global factors are fitted as no-intercept least-squares scales. Generate a master oracle CSV and fold-specific `scale_factor` files with:
+
+```bash
+python scripts/prepare_oracle_scale_factors.py \
+  --metadata data/metadata/combined_labels.csv \
+  --depth-dir data/depth \
+  --sun-path data/raw/sun-seg \
+  --output data/metadata/depth_scale_factors_oracle.csv \
+  --fold-split data/splits/fold0.csv \
+  --fold 0 \
+  --scale-output-dir data/splits/scale_factors
+```
+
+Use a generated scale CSV by adding these config fields to `configs/cnn3_depth.yaml`:
+
+```yaml
+augmentation:
+  depth_norm_method: none
+data:
+  scale_factors_file: data/splits/scale_factors/depth_scale_factors_oracle_frame_fold0.csv
+  scale_factor_col: scale_factor
+```
+
+Use `depth_source: metriccol` to evaluate MetricCol depth maps. Use `mask_bbox_scale_factor: 0.8` or `1.2` for the 20% bounding-box perturbation controls. Use `prefer_predicted_mask_bbox: true` plus `real_colon_segmentation_dir` and `sun_segmentation_dir` to substitute PolypPVT predicted masks.
 
 ### Feature CSVs
 
@@ -181,6 +248,12 @@ python eval.py \
 
 Primary metrics are Macro-F1 and recall for the `>5 mm` class. Report mean and standard deviation over five patient-stratified folds.
 
+For the shortcut-consistent versus shortcut-inconsistent oracle-gain test, prepare a fold-level CSV with columns `fold,group,baseline_macro_f1,oracle_macro_f1` and run:
+
+```bash
+python scripts/shortcut_gain_ttest.py --csv data/analysis/shortcut_oracle_gains.csv
+```
+
 ## Datasets and Third-party Model Weights
 
 The code expects users to obtain datasets and third-party model assets from their original sources:
@@ -190,3 +263,21 @@ The code expects users to obtain datasets and third-party model assets from thei
 - Polyp segmentation model: [PolypPVT](https://github.com/dengpingfan/polyp-pvt)
 
 Users must obtain datasets and third-party weights from their original sources and place derived files at the paths configured locally.
+
+This repository does not include trained probe checkpoints. The paper contribution is the diagnostic audit protocol and evidence, so code, configs, fold assignments, and scale/statistical utilities are the essential public assets. Checkpoints can be released separately as a convenience for exact-output comparison, but they are not required for readers to retrain or audit the probes from the public datasets.
+
+## Citation
+
+```bibtex
+@inproceedings{xiong2026polypsizing,
+  title={Understanding Model Behavior in Monocular Polyp Sizing},
+  author={Xiong, Xinqi and Dunn Beltran, Andrea and Choi, Junmyeong and McGill, Sarah K. and Niethammer, Marc and Sengupta, Roni},
+  booktitle={Medical Image Computing and Computer Assisted Intervention -- MICCAI 2026},
+  year={2026},
+  organization={Springer}
+}
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

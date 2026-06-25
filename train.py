@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import yaml
 import argparse
 from pathlib import Path
@@ -315,7 +315,7 @@ class Trainer:
 
         # AMP scaler
         self.use_amp = config['training'].get('use_amp', True)
-        self.scaler = GradScaler() if self.use_amp else None
+        self.scaler = GradScaler('cuda') if self.use_amp else None
 
         # Optional margin-based pairwise ranking loss (ERk4)
         self.use_margin_ranking = bool(config['training'].get('use_margin_ranking', False))
@@ -413,14 +413,14 @@ class Trainer:
         lengths = [int(g["frames"]) for g in groups.values()]
         frames_total = int(np.sum(lengths)) if lengths else 0
 
-        polyps_ge5 = 0
-        lengths_ge5: List[int] = []
+        polyps_gt5 = 0
+        lengths_gt5: List[int] = []
         for g in groups.values():
             if g["sizes"]:
                 sz = float(np.median(np.array(g["sizes"], dtype=np.float32)))
-                if sz >= 5.0:
-                    polyps_ge5 += 1
-                    lengths_ge5.append(int(g["frames"]))
+                if sz > 5.0:
+                    polyps_gt5 += 1
+                    lengths_gt5.append(int(g["frames"]))
 
         def _stats(arr: List[int]) -> Optional[Dict[str, float]]:
             if not arr:
@@ -440,21 +440,21 @@ class Trainer:
             "split": split_name,
             "group_by": group_by,
             "polyps_total": int(len(groups)),
-            "polyps_ge5": int(polyps_ge5),
-            "polyps_lt5": int(len(groups) - polyps_ge5),
+            "polyps_gt5": int(polyps_gt5),
+            "polyps_le5": int(len(groups) - polyps_gt5),
             "frames_total": int(frames_total),
             "frames_per_polyp": _stats(lengths),
-            "frames_per_polyp_ge5": _stats(lengths_ge5),
+            "frames_per_polyp_gt5": _stats(lengths_gt5),
             "missing_size_mm_samples": int(missing_size),
         }
 
         print(
             f"[AUDIT] split={split_name} group_by={group_by} "
-            f"polyps_total={out['polyps_total']} polyps_ge5={out['polyps_ge5']} polyps_lt5={out['polyps_lt5']}"
+            f"polyps_total={out['polyps_total']} polyps_gt5={out['polyps_gt5']} polyps_le5={out['polyps_le5']}"
         )
         print(
             f"[AUDIT] split={split_name} frames_total={out['frames_total']} "
-            f"frames_per_polyp={out['frames_per_polyp']} frames_per_polyp_ge5={out['frames_per_polyp_ge5']}"
+            f"frames_per_polyp={out['frames_per_polyp']} frames_per_polyp_gt5={out['frames_per_polyp_gt5']}"
         )
         if missing_size:
             print(f"[AUDIT] split={split_name} missing_size_mm_samples={missing_size}")
@@ -520,7 +520,7 @@ class Trainer:
             self.optimizer.zero_grad()
 
             # Forward pass with AMP
-            with autocast(enabled=self.use_amp):
+            with autocast('cuda', enabled=self.use_amp):
                 if self.arch == 'photometry_mlp':
                     logits = self.model(features)
                     mask_logits = None
@@ -538,7 +538,7 @@ class Trainer:
                 if self.vrex_lambda > 0 and 'dataset' in batch:
                     _dsets = batch['dataset']
                     _env_losses = []
-                    for _env_vals in (('real_colon', 'augmented'), ('sun',)):
+                    for _env_vals in (('real_colon',), ('sun',)):
                         _mask = torch.tensor(
                             [d in _env_vals for d in _dsets], dtype=torch.bool, device=self.device
                         )
@@ -684,7 +684,7 @@ class Trainer:
             if features is not None:
                 features = features.to(self.device)
 
-            with autocast(enabled=self.use_amp):
+            with autocast('cuda', enabled=self.use_amp):
                 if self.arch == 'photometry_mlp':
                     logits = self.model(features)
                 else:

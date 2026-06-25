@@ -2,10 +2,10 @@
 Unified RGBD dataset loader for polyp size classification
 
 Supports:
-- Dataset A: Polyp_Size (frame-level annotations)
-- Dataset B: real-colon-dataset (video-level annotations)
+- Real-Colon
+- SUN-SEG
 - Patient/video-wise splits (no leakage)
-- Scenario toggles (baseline, depth rescaling, copy-paste)
+- Scenario toggles (baseline, depth rescaling)
 """
 
 import torch
@@ -41,12 +41,14 @@ class RGBDPolypDataset(Dataset):
             config: Configuration dictionary
             split: 'train', 'val', or 'test'
             transform: Data transforms (should handle RGB and depth separately)
-            scenario_id: 1 (baseline), 2 (depth rescaling), or 3 (copy-paste)
+            scenario_id: 1 (baseline) or 2 (depth rescaling)
         """
         self.config = config
         self.split = split
         self.transform = transform
         self.scenario_id = scenario_id
+        if scenario_id not in {1, 2}:
+            raise ValueError("Public release supports scenario_id 1 (baseline) and 2 (depth rescaling).")
 
         self.data_config = config['data']
         self.image_size = self.data_config['image_size']
@@ -98,9 +100,7 @@ class RGBDPolypDataset(Dataset):
             self.return_unmasked = True
 
         # Paths
-        self.polyp_size_images = Path(self.data_config['polyp_size_images'])
-        self.polyp_size_labels = Path(self.data_config['polyp_size_labels'])
-        self.real_colon_path = Path(self.data_config['real_colon_path'])
+        self.real_colon_path = Path(self.data_config.get('real_colon_path') or '')
         self.depth_dir = Path(self.data_config['depth_maps_dir'] or '')
         self.seg_dir = Path(self.data_config.get('segmentation_dir') or '')
         self.real_colon_allowlist = self._load_real_colon_allowlist()
@@ -124,22 +124,10 @@ class RGBDPolypDataset(Dataset):
         # Load samples
         all_samples = self._load_samples()
 
-        # Initialize copy-paste augmentation for Scenario 3
-        # Note: Build pools from ALL samples (before split filtering) so we can paste from any source
-        # IMPORTANT: Only initialize if copy_paste is enabled (on-the-fly mode)
-        # For pre-generated augmented samples, this is not needed
-        self.copy_paste_aug = None
-        if scenario_id == 3 and config.get('copy_paste', {}).get('enabled', False):
-            if self.input_channels == 3:
-                print("Warning: RGB-only input; disabling copy-paste augmentation (requires depth).")
-                self.copy_paste_aug = None
-            else:
-                self.copy_paste_aug = self._init_copy_paste_augmentation(all_samples, config)
-
         # Filter to current split
         self.samples = [s for s in all_samples if s['split'] == split]
 
-        # Optional sample cap (useful for smoke tests)
+        # Optional sample cap for quick local debugging
         max_samples = self.data_config.get('max_samples_per_split')
         if max_samples is not None and len(self.samples) > int(max_samples):
             split_offset = {'train': 1, 'val': 2, 'test': 3}.get(split, 0)
@@ -241,20 +229,18 @@ class RGBDPolypDataset(Dataset):
         """Load and combine samples from selected datasets"""
         samples = []
 
-        # Determine which datasets to load (default: both)
-        dataset_types = self.data_config.get('dataset_types', ['polyp_size', 'real_colon'])
+        dataset_types = self.data_config.get('dataset_types', ['real_colon', 'sun'])
+        unsupported = sorted(set(dataset_types) - {'real_colon', 'sun'})
+        if unsupported:
+            raise ValueError(
+                f"Unsupported public dataset type(s): {unsupported}. "
+                "This release supports only 'real_colon' and 'sun'."
+            )
 
-        # Load Dataset A: Polyp_Size
-        if 'polyp_size' in dataset_types:
-            samples_a = self._load_polyp_size_dataset()
-            samples.extend(samples_a)
-
-        # Load Dataset B: real-colon (if exists and selected)
         if 'real_colon' in dataset_types and self.real_colon_path.exists():
             samples_b = self._load_real_colon_dataset()
             samples.extend(samples_b)
 
-        # Load Dataset C: SUN-SEG
         if 'sun' in dataset_types:
             samples_c = self._load_sun_dataset()
             samples.extend(samples_c)
@@ -269,70 +255,16 @@ class RGBDPolypDataset(Dataset):
 
         return samples
 
-    def _load_polyp_size_dataset(self) -> List[Dict]:
-        """Load Polyp_Size dataset from frame_labels.csv"""
-        samples = []
-
-        # Load labels CSV
-        if not self.polyp_size_labels.exists():
-            print(f"Warning: Labels file not found: {self.polyp_size_labels}")
-            return samples
-
-        df = pd.read_csv(self.polyp_size_labels)
-        max_label = df['label'].max() if 'label' in df.columns and not df.empty else None
-
-        for idx, row in df.iterrows():
-            # Parse from CSV columns: image_name, video_id, depth_idx, size_mm, label, has_mask, has_depth
-            image_name = row.get('image_name', '')
-            video_id = row.get('video_id', 'unknown')
-            depth_idx = row.get('depth_idx', idx)
-            size_mm = row.get('size_mm', 0.0)
-            label = int(row.get('label', 1))
-            if self.num_classes == 2:
-                if max_label is not None and max_label <= 1:
-                    # Already binary labels using the 5 mm threshold: keep as-is (0/1)
-                    pass
-                else:
-                    # Legacy multiclass labels are not part of the public 5 mm task.
-                    if label == 0:
-                        continue
-                    if label in (1, 2):
-                        label = label - 1
-            has_mask = row.get('has_mask', True)
-            has_depth = row.get('has_depth', True)
-
-            # Skip if no depth available (only for RGBD)
-            if self.input_channels == 4 and not has_depth:
-                continue
-
-            sample = {
-                'image_name': image_name,
-                'image_path': self.polyp_size_images / image_name,
-                'label': label,
-                'size_mm': float(size_mm),
-                'video_id': video_id,
-                'lesion_id': row.get('lesion_id', row.get('polyp_idx', video_id)),
-                'dataset': 'polyp_size',
-                'depth_idx': depth_idx,
-                'has_mask': has_mask,
-                'split': None  # Will be assigned later
-            }
-
-            samples.append(sample)
-
-        return samples
-
     def _load_real_colon_dataset(self) -> List[Dict]:
         """Load Real-Colon dataset from real_colon_frame_labels.csv"""
         samples = []
 
-        # Look for Real-Colon frame labels CSV
         real_colon_labels = self.data_config.get('real_colon_labels')
         if real_colon_labels is None:
-            # Try default location
-            real_colon_labels = Path(self.data_config['polyp_size_labels']).parent / 'real_colon_frame_labels.csv'
-        else:
-            real_colon_labels = Path(real_colon_labels)
+            print("Info: No real_colon_labels path in config, skipping Real-Colon dataset")
+            return samples
+
+        real_colon_labels = Path(real_colon_labels)
 
         if not real_colon_labels.exists():
             print(f"Info: Real-Colon labels CSV not found: {real_colon_labels}")
@@ -380,24 +312,13 @@ class RGBDPolypDataset(Dataset):
                     if label in (1, 2):
                         label = label - 1
 
-            # Check if this is an augmented sample (Scenario 3)
-            is_augmented = row.get('is_augmented', False)
-
             bbox = self._extract_bbox_from_row(row)
 
             image_width = int(row.get('image_width', 0))
             image_height = int(row.get('image_height', 0))
 
             # Construct full path to frame
-            if is_augmented:
-                # Augmented samples: use base_dir / frame_path (already contains augmented_copy_paste/...)
-                base_dir = self.real_colon_path.parent  # Go up to data/Size/
-                full_frame_path = base_dir / frame_path
-                dataset_type = 'augmented'
-            else:
-                # Original samples
-                full_frame_path = dataset_dir / frame_path
-                dataset_type = 'real_colon'
+            full_frame_path = dataset_dir / frame_path
 
             if not full_frame_path.exists():
                 continue
@@ -409,9 +330,8 @@ class RGBDPolypDataset(Dataset):
                 'size_mm': float(size_mm),
                 'video_id': video_id,
                 'lesion_id': row.get('lesion_id', video_id),
-                'dataset': dataset_type,  # 'real_colon' or 'augmented'
+                'dataset': 'real_colon',
                 'depth_idx': idx,  # Use CSV index for depth file lookup
-                'is_augmented': is_augmented,
                 'bbox': bbox,
                 'image_width': image_width,
                 'image_height': image_height,
@@ -1445,16 +1365,7 @@ class RGBDPolypDataset(Dataset):
         if self.scenario_id == 2 and needs_depth:
             depth = self._apply_depth_rescaling(depth, sample['image_name'])
 
-        # Apply copy-paste augmentation for Scenario 3 (only during training)
         label = sample['label']  # Get label early
-        if self.scenario_id == 3 and self.split == 'train' and self.copy_paste_aug is not None:
-            rgb_clamped = torch.clamp(rgb, 0, 1)
-            rgb_np = (rgb_clamped.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)  # [H, W, 3]
-            depth_np = depth.squeeze(0).cpu().numpy()  # [H, W]
-            rgb_np, depth_np, label = self.copy_paste_aug(rgb_np, depth_np, label)
-            rgb = torch.from_numpy(rgb_np).permute(2, 0, 1).float() / 255.0  # [3, H, W]
-            depth = torch.from_numpy(depth_np).unsqueeze(0).float()  # [1, H, W]
-            mask = None
 
         # Normalize depth (after rescaling if applicable)
         if needs_depth:
@@ -1577,40 +1488,11 @@ class RGBDPolypDataset(Dataset):
         return output
 
     def _find_depth_path(self, sample: Dict) -> Optional[Path]:
-        """Find depth map path for a sample (handles all datasets including augmented)"""
+        """Find depth map path for a sample."""
         dataset = sample['dataset']
         depth_idx = sample.get('depth_idx', None)
 
-        if dataset == 'polyp_size':
-            # Use depth_idx for Polyp_Size
-            if depth_idx is not None:
-                # Try depth_maps_depthanything first
-                depth_path = self.depth_dir / 'polyp_size' / f"{depth_idx:06d}.pt"
-                if depth_path.exists():
-                    return depth_path
-
-                if self.depth_fallback:
-                    # Fallback: try depth_maps_ppsnet (alternative depth source for Polyp_Size)
-                    depth_ppsnet_dir = self.depth_dir.parent / 'depth_maps_ppsnet'
-                    depth_path_alt = depth_ppsnet_dir / 'polyp_size' / f"{depth_idx:06d}.pt"
-                    if depth_path_alt.exists():
-                        return depth_path_alt
-
-            # Fallback: try image name
-            image_name = sample['image_name']
-            name_no_ext = Path(image_name).stem
-            depth_path = self.depth_dir / 'polyp_size' / f"{name_no_ext}.pt"
-            if depth_path.exists():
-                return depth_path
-
-            if self.depth_fallback:
-                # Fallback for image name with ppsnet
-                depth_ppsnet_dir = self.depth_dir.parent / 'depth_maps_ppsnet'
-                depth_path_alt = depth_ppsnet_dir / 'polyp_size' / f"{name_no_ext}.pt"
-                if depth_path_alt.exists():
-                    return depth_path_alt
-
-        elif dataset == 'real_colon':
+        if dataset == 'real_colon':
             # Use depth_idx for Real-Colon (sequential numbering)
             if depth_idx is not None:
                 if self.depth_source == 'metriccol':
@@ -1647,72 +1529,13 @@ class RGBDPolypDataset(Dataset):
                     if depth_path_alt.exists():
                         return depth_path_alt
 
-
-        elif dataset == 'augmented':
-            # Augmented samples: depth maps are in augmented_copy_paste/depth_maps/
-            # The depth_idx in the merged CSV points to the augmented depth index
-            # We need to calculate the augmented sample index
-            if depth_idx is not None:
-                # Get augmented data directory from config
-                augmented_dir = self.data_config.get('augmented_data_dir')
-                if augmented_dir:
-                    augmented_dir = Path(augmented_dir)
-                else:
-                    # Default location
-                    augmented_dir = self.depth_dir.parent / 'augmented_copy_paste'
-
-                # The merged CSV assigns depth_idx starting from max_original_idx + 1
-                # But augmented depth maps are numbered 000000.pt, 000001.pt, etc.
-                # We need to compute the offset by reading the original CSV
-                real_colon_labels = self.data_config.get('real_colon_labels')
-                if 'augmentation' in str(real_colon_labels):
-                    # This is the merged CSV, compute max from original
-                    # Load original CSV to get max depth_idx
-                    original_csv = Path(str(real_colon_labels).replace('with_augmentation', 'binary_5mm'))
-                    if original_csv.exists():
-                        try:
-                            df_orig = pd.read_csv(original_csv)
-                            max_original_depth_idx = int(df_orig['depth_idx'].max())
-                        except:
-                            # Fallback if CSV read fails
-                            max_original_depth_idx = 357263  # Known max for Real-Colon
-                    else:
-                        max_original_depth_idx = 357263  # Known max for Real-Colon
-
-                    # Compute augmented index: aug_idx = depth_idx - max_depth_idx - 1
-                    aug_idx = depth_idx - max_original_depth_idx - 1
-
-                    depth_path = augmented_dir / 'depth_maps' / f"{aug_idx:06d}.pt"
-                    if depth_path.exists():
-                        return depth_path
-
         return None
 
     def _find_mask_path(self, sample: Dict) -> Optional[Path]:
         """Find segmentation mask path for a sample (handles both datasets)"""
         dataset = sample['dataset']
 
-        if dataset == 'polyp_size':
-            # Polyp_Size uses segmentation masks
-            if not self.seg_dir:
-                return None
-
-            image_name = sample['image_name']
-            name_no_ext = Path(image_name).stem
-
-            # Try various naming patterns
-            for pattern in [
-                image_name,
-                f"{name_no_ext}.png",
-                f"{name_no_ext}_mask.png"
-            ]:
-                mask_path = self.seg_dir / pattern
-                if mask_path.exists():
-                    return mask_path
-
-            return None
-
-        elif dataset in {'real_colon', 'augmented'}:
+        if dataset == 'real_colon':
             mask_root = self.real_colon_seg_dir if self.real_colon_seg_dir else self.seg_dir
             if not mask_root:
                 return None
@@ -1819,122 +1642,6 @@ class RGBDPolypDataset(Dataset):
         if x2 > x1 and y2 > y1:
             mask[y1:y2, x1:x2] = 255
         return mask
-
-    def _init_copy_paste_augmentation(self, all_samples: List[Dict], config: Dict):
-        """Initialize copy-paste augmentation for Scenario 3"""
-        try:
-            from src.utils.copy_paste import CopyPasteAugmentation
-        except ImportError:
-            print("Warning: Could not import CopyPasteAugmentation. Copy-paste will be disabled.")
-            return None
-
-        # Get config parameters
-        aug_config = config.get('augmentation', {}).get('copy_paste', {})
-        cp_config = config.get('copy_paste', {})
-        
-        # Merge configs (copy_paste section takes precedence)
-        depth_threshold = aug_config.get(
-            'depth_similarity_threshold',
-            cp_config.get('depth_similarity_threshold', 0.1)
-        )
-        min_paste_size = aug_config.get(
-            'min_paste_size',
-            cp_config.get('min_paste_size', 50)
-        )
-        max_paste_size = aug_config.get(
-            'max_paste_size',
-            cp_config.get('max_paste_size', 300)
-        )
-        blend_kernel_size = aug_config.get(
-            'blend_kernel_size',
-            cp_config.get('blend_kernel_size', 15)
-        )
-        erosion_size = aug_config.get(
-            'border_erosion',
-            aug_config.get(
-                'erosion_size',
-                cp_config.get('border_erosion', cp_config.get('erosion_size', 5))
-            )
-        )
-        use_color_transfer = aug_config.get(
-            'use_color_transfer',
-            cp_config.get('use_color_transfer', True)
-        )
-        apply_prob = aug_config.get('apply_prob', cp_config.get('apply_prob', 0.5))
-
-        # Build source and target pools from all samples
-        source_pool = []
-        target_pool = []
-
-        for sample in all_samples:
-            image_name = sample['image_name']
-            dataset = sample['dataset']
-            depth_path = self._find_depth_path(sample)
-
-            # Source pool: frames with polyps (label 1 or 2)
-            if sample['label'] in [1, 2]:  # Has polyp
-                if depth_path and depth_path.exists():
-                    # Handle both mask-based (Polyp_Size) and bbox-based (Real-Colon)
-                    if dataset == 'polyp_size':
-                        mask_path = self._find_mask_path(sample)
-                        if mask_path and mask_path.exists():
-                            source_pool.append({
-                                'image_name': image_name,
-                                'rgb_path': str(sample['image_path']),
-                                'depth_path': str(depth_path),
-                                'mask_path': str(mask_path),
-                                'label': sample['label'],
-                                'dataset': dataset
-                            })
-                    elif dataset == 'real_colon':
-                        # Store bbox info instead of mask path
-                        source_pool.append({
-                            'image_name': image_name,
-                            'rgb_path': str(sample['image_path']),
-                            'depth_path': str(depth_path),
-                            'bbox': sample['bbox'],
-                            'image_width': sample['image_width'],
-                            'image_height': sample['image_height'],
-                            'label': sample['label'],
-                            'dataset': dataset
-                        })
-
-            # Target pool: frames without polyps (label 0)
-            elif sample['label'] == 0:
-                if depth_path and depth_path.exists():
-                    target_pool.append({
-                        'image_name': image_name,
-                        'rgb_path': str(sample['image_path']),
-                        'depth_path': str(depth_path),
-                        'label': sample['label'],
-                        'dataset': dataset
-                    })
-
-        if len(source_pool) == 0 or len(target_pool) == 0:
-            print(f"Warning: Copy-paste pools are insufficient. Source: {len(source_pool)}, Target: {len(target_pool)}")
-            print("Copy-paste augmentation will be disabled.")
-            return None
-
-        # Create augmenter
-        augmenter = CopyPasteAugmentation(
-            source_pool=source_pool,
-            target_pool=target_pool,
-            depth_similarity_threshold=depth_threshold,
-            min_paste_size=min_paste_size,
-            max_paste_size=max_paste_size,
-            blend_kernel_size=blend_kernel_size,
-            erosion_size=erosion_size,
-            use_color_transfer=use_color_transfer,
-            p=apply_prob
-        )
-
-        print(f"\n✅ Initialized copy-paste augmentation (Scenario 3):")
-        print(f"   Source pool (with polyps): {len(source_pool)} samples")
-        print(f"   Target pool (no polyps): {len(target_pool)} samples")
-        print(f"   Depth similarity threshold: {depth_threshold}")
-        print(f"   Apply probability: {apply_prob}")
-
-        return augmenter
 
     def _load_depth(self, depth_path: Path) -> np.ndarray:
         """Load depth map"""
@@ -2189,9 +1896,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     # Load config
-    # config_path = Path(__file__).parent.parent.parent / "config" / "scenario1_baseline.yaml"
-    # config_path = Path(__file__).parent.parent.parent / "config" / "scenario2_depth_rescaling.yaml"
-    config_path = Path(__file__).parent.parent.parent / "config" / "scenario3_copy_paste.yaml"
+    config_path = Path(__file__).parent.parent.parent / "configs" / "resnet18_rgb.yaml"
     print(f"Loading config: {config_path}")
     
     with open(config_path) as f:

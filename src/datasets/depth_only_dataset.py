@@ -59,7 +59,7 @@ class DepthOnlyPolypDataset(Dataset):
             split_strategy: 'video_stratified' or 'frame_stratified'.
             augment: Whether to apply augmentations (flip).
             flip_prob: Horizontal flip probability.
-            max_samples: Optional cap on number of samples (for smoke tests).
+            max_samples: Optional cap on number of samples for quick local debugging.
             depth_source: 'ppsnet' or 'metriccol'.
         """
         self.depth_dir = Path(depth_dir)
@@ -428,10 +428,6 @@ class DepthOnlyPolypDataset(Dataset):
                 path = self.depth_dir.parent / 'depth_maps_metriccol' / 'real_colon' / f"{depth_idx:06d}.pt"
                 if path.exists():
                     return path
-            elif dataset == 'polyp_size':
-                path = self.depth_dir.parent / 'depth_maps_metriccol' / 'polyp_size' / f"{depth_idx:06d}.pt"
-                if path.exists():
-                    return path
             elif dataset == 'sun' and self.sun_path:
                 path = self.sun_path / 'depth_maps_metriccol' / f"{depth_idx:06d}.pt"
                 if path.exists():
@@ -440,8 +436,6 @@ class DepthOnlyPolypDataset(Dataset):
         # PPSNet (default or fallback)
         if dataset == 'real_colon':
             depth_path = self.depth_dir / 'real_colon' / f"{depth_idx:06d}.pt"
-        elif dataset == 'polyp_size':
-            depth_path = self.depth_dir / 'polyp_size' / f"{depth_idx:06d}.pt"
         elif dataset == 'sun':
             depth_path = self.depth_dir / 'sun' / f"{depth_idx:06d}.pt"
             if not depth_path.exists() and self.sun_path:

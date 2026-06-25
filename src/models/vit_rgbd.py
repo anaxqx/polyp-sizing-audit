@@ -353,46 +353,44 @@ def create_vit_rgbd_from_config(config: Dict) -> ViTRGBD:
 
 # Example usage and testing
 if __name__ == "__main__":
-    import yaml
-    from pathlib import Path
+    # Quick self-test with default config values
+    config = {
+        "data": {"image_size": 224, "num_classes": 2},
+        "model": {
+            "architecture": "vit_rgbd",
+            "name": "vit_base_patch16_224",
+            "input_channels": 4,
+            "num_classes": 2,
+            "pretrained": False,
+        },
+    }
 
-    # Load config
-    config_path = Path(__file__).parent.parent.parent / "config" / "scenario1_baseline.yaml"
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-
-    # Create model
     print("Creating ViT RGBD model...")
     model = create_vit_rgbd_from_config(config)
 
-    # Model summary
     print(f"\nModel: {model.model_name}")
     print(f"Embedding dim: {model.embed_dim}")
     print(f"Number of classes: {model.num_classes}")
 
-    # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    # Test forward pass
     print("\nTesting forward pass...")
     batch_size = 2
     image_size = config['data']['image_size']
-
     dummy_input = torch.randn(batch_size, 4, image_size, image_size)
     print(f"Input shape: {dummy_input.shape}")
 
     with torch.no_grad():
         output = model(dummy_input)
 
-    print(f"Output shape: {output.shape}")  # Should be [2, 3]
+    print(f"Output shape: {output.shape}")
     print(f"Output logits: {output}")
 
-    # Test features
     with torch.no_grad():
         features = model.get_features(dummy_input)
-    print(f"Features shape: {features.shape}")  # Should be [2, embed_dim]
+    print(f"Features shape: {features.shape}")
 
-    print("\n✅ Model creation and forward pass successful!")
+    print("\nModel creation and forward pass successful!")
