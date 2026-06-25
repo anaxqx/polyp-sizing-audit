@@ -269,13 +269,13 @@ This repository does not include trained probe checkpoints. The paper contributi
 ## Citation
 
 ```bibtex
-@inproceedings{xiong2026polypsizing,
+@article{xiong2026understanding,
   title={Understanding Model Behavior in Monocular Polyp Sizing},
-  author={Xiong, Xinqi and Dunn Beltran, Andrea and Choi, Junmyeong and McGill, Sarah K. and Niethammer, Marc and Sengupta, Roni},
-  booktitle={Medical Image Computing and Computer Assisted Intervention -- MICCAI 2026},
-  year={2026},
-  organization={Springer}
+  author={Xiong, Xinqi and Beltran, Andrea Dunn and Choi, Junmyeong and McGill, Sarah K and Niethammer, Marc and Sengupta, Roni},
+  journal={arXiv preprint arXiv:2605.20461},
+  year={2026}
 }
+
 ```
 
 ## License
