@@ -10,14 +10,14 @@
 >
 > MICCAI 2026
 
-Companion code release for diagnostic probes that audit monocular polyp size classification behavior.
+Code for diagnostic probes that audit monocular polyp size classification behavior.
 
 The task is binary classification:
 
 - `0`: polyp size `<= 5 mm`
 - `1`: polyp size `> 5 mm`
 
-This repository supports a model-behavior audit, not a deployable clinical sizing model or leaderboard-style benchmark. It contains the public code and lightweight reproducibility assets needed to train and evaluate the core probes:
+This repository provides a model-behavior audit for monocular polyp sizing task. It contains the public code and lightweight reproducibility assets needed to train and evaluate the core probes:
 
 - ResNet18 RGB probe
 - ViT-B RGB probe
@@ -27,7 +27,7 @@ This repository supports a model-behavior audit, not a deployable clinical sizin
 - oracle/global scale-factor utilities
 - fold-assignment and statistical-test utilities
 
-Raw videos/frames, generated depth maps, generated masks, checkpoints, internal cluster paths, and third-party model weights are not included. Users should obtain public datasets and third-party assets from their original sources and generate derived artifacts locally.
+Raw videos/frames, generated depth maps, generated masks, checkpoints, and third-party model weights are not included. Users should obtain public datasets and third-party assets from their original sources and generate derived artifacts locally.
 
 ## Quick Start
 
@@ -38,7 +38,6 @@ cd polyp-sizing-audit
 conda env create -f environment.yml
 conda activate polyp-sizing-audit
 
-# Optional pip path: install PyTorch separately first, see https://pytorch.org
 pip install -r requirements.txt
 ```
 
@@ -70,9 +69,9 @@ conda activate polyp-sizing-audit
 
 ## Data Format
 
-Prepare your data locally. Paths in the CSVs can be absolute, or relative to the dataset roots in the config.
+Prepare your data locally.
 
-For paper-number reproduction, these metadata files should describe the Real-Colon and SUN-SEG frame set used by the audit: all 232 unique polyps in the two datasets, after dropping frames without an annotated polyp. The paper reports 147 polyps `<=5 mm` and 85 polyps `>5 mm`, evaluated with patient-stratified cross-validation. Larger raw-dataset frame counts are useful context, but they include frames that are not direct training/evaluation rows after no-polyp frames are removed.
+For paper-number reproduction, these metadata files should describe the Real-Colon and SUN-SEG frame set used by the audit: all 232 unique polyps in the two datasets, after dropping frames without an annotated polyp. The paper reports 147 polyps `<=5 mm` and 85 polyps `>5 mm`, evaluated with patient-stratified cross-validation.
 
 ### Metadata CSVs
 
@@ -262,9 +261,7 @@ The code expects users to obtain datasets and third-party model assets from thei
 - Depth estimation model: [MetricCol](https://github.com/liuyq055/MetricCol/tree/main) and [PPSNet](https://ppsnet.github.io/)
 - Polyp segmentation model: [PolypPVT](https://github.com/dengpingfan/polyp-pvt)
 
-Users must obtain datasets and third-party weights from their original sources and place derived files at the paths configured locally.
-
-This repository does not include trained probe checkpoints. The paper contribution is the diagnostic audit protocol and evidence, so code, configs, fold assignments, and scale/statistical utilities are the essential public assets. Checkpoints can be released separately as a convenience for exact-output comparison, but they are not required for readers to retrain or audit the probes from the public datasets.
+Users need to obtain datasets and third-party weights from their original sources and place derived files at the paths configured locally. This repository does not include trained probe checkpoints.
 
 ## Citation
 
