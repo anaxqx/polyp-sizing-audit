@@ -10,14 +10,14 @@
 >
 > MICCAI 2026
 
-Code for diagnostic probes that audit monocular polyp size classification behavior.
+This repository accompanies a study of which cues models use to classify polyp size from monocular colonoscopy images. The diagnostic probes compare RGB, estimated depth, and handcrafted features. A geometry ablation and scale-factor utilities support further analysis of the cues available to each model.
 
-The task is binary classification:
+The probes classify polyps into two size groups:
 
 - `0`: polyp size `<= 5 mm`
 - `1`: polyp size `> 5 mm`
 
-This repository provides a model-behavior audit for monocular polyp sizing task. It contains the public code and lightweight reproducibility assets needed to train and evaluate the core probes:
+The repository includes training and evaluation code for the following probes, plus utilities used in the audit:
 
 - ResNet18 RGB probe
 - ViT-B RGB probe
